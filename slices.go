@@ -23,7 +23,7 @@ title = "Go slices are not dynamic arrays"
 description = "Go slices are based on a smart concept that does not like being ignored"
 author = "Christoph Berger"
 email = "chris@appliedgo.net"
-date = "2017-08-01"
+date = "2017-08-03"
 draft = "true"
 domains = ["Patterns and Paradigms"]
 tags = ["slice", "append", "split", "memory management", "gotcha"]
@@ -34,11 +34,17 @@ Go's slices are cleverly designed. They provide the look-and-feel of truly dynam
 
 <!--more-->
 
+*Just recently I noticed a few discussions--again--about seemingly behavior of slice operations. I take this as an opportunity to talk a bit about slice internals and the mechanics around slice operations, especially `append()` and `bytes.Split()`.*
+
+
+## Go's slices
+
 The concept of slices in Go is really a clever one. A slice represents a flexible-length array-like data type while providing full control over memory allocations.
 
-But first things first: What are slices, and how do they work?
+This concept is not seen in other languages, and so people new to Go often consider the behavior of slice operations as quite confusing. (Believe me, it happened to me as well.) Looking at the inner workings of slices removes much (if not all) of the confusion, so let's first have a look at the basics: What are slices, and how do they work?
 
-## The slice concept in Go
+
+## A slice is just a view on an array
 
 In Go, arrays have a fixed size. The size is even part of the definition of an array, so the two arrays `[10]int` and `[20]int` are not just two `int` arrays of different size but are in fact different types.
 
@@ -46,11 +52,11 @@ Slices add a dynamic layer on top of arrays. Creating a slice from an array  nei
 
 This means that typical slice manipulations are cheap. Creating a slice, expanding it (as far as the available capacity permits), moving it back and forth on the underlying array--all that requires nothing more than changing the pointer value and/or one or both of the two int values. The data location does not change.
 
-This also means that two slices created from the same array can overlap, and after assigning a slice to a new slice variable, both variables now share the same memory cells. Changing one item in one of the slices also change the same item in the other slice. If you want to create a true copy of a slice, create a new slice and call the built-in function `copy()`.
+HYPE[slice basics](slices01.html)
 
-All of this is based on simple and consistent mechanisms.
+This also means that two slices created from the same array can overlap, and after assigning a slice to a new slice variable, both variables now share the same memory cells. Changing one item in one of the slices also change the same item in the other slice. If you want to create a true copy of a slice, create a new slice and use the built-in function `copy()`.
 
-The problems arise when not being aware of these mechanisms.
+All of this is based on simple and consistent mechanisms. The problems arise when not being aware of these mechanisms.
 
 
 ## Some slice functions work in place
@@ -61,17 +67,20 @@ As an example, `bytes.Split()` takes a slice and a separator, splits the slice b
 
 But: All the byte slices returned by `Split()` still point to the same underlying array as the original slice. This may--no, this *will* come unexpected to those who know split functions from other languages that happily sacrifice efficiency for the convenience of allocate-and-copy semantics.
 
+HYPE[split](slices02.html)
+
 Code that ignores the fact that the result of `Split()` still points to the original data may cause data corruption in a way that neither the compiler nor the runtime can detect as being wrong.
 
 
 ## append() adds convenience--and magic
 
-`append()` adds new elements to the end of a slice, thus expanding the slice. This is not different to re-slicing a slice--until the slice capacity is reached. Then `append()` takes the liberty to allocate a new array of sufficient length, copy over the original slice, and appending the new values to this new slice.
+`append()` adds new elements to the end of a slice, thus expanding the slice. `append()` has two convenience features:
+* First, it can append to a `nil` slice, making it spring into existence in the moment of appending.
+*  Second, if the remaining capacity is not sufficient for appending new values, `append()` automatically takes care of allocating a new array and copying the old content over.
 
-Now any slices that previously shared some or all elements with the re-allocated slice suddenly do not share any data with that slice anymore.
+Especially the second one can cause confusion, because after an `append()`, sometimes the original array has been changed, and sometimes a new array has been created, and the original one stays the same. If the original array was referenced by different parts of the code, one reference then may point to stale data.
 
-So `append()` can cause two different results, depending on whether the original array has sufficient room for expanding the slice, or whether allocating a new array is required.
-
+HYPE[split](slices03.html)
 
 And there is a second characteristic of `append()`. It receives the slice parameter *by value* (remember that all parameters are passed by value in Go), which means that the slice header is copied over into `append`'s body. Any change to the slice header--length, capacity, or the location in case of a new array--is therefore only stored in the local copy of the slice header. For this reason, `append()` returns the modified slice header to the caller, to allow updating the original slice header with any changes to location, length, or capacity.
 
@@ -82,10 +91,14 @@ s1 := []int{1, 2, 3, 4}
 s2 := append(s1, 5, 6, 7, 8)
 ```
 
-Now the original slice header is not updated with the new length and perhaps also a new capacity, and a new location in case `append()` had to allocate a new array.
+Now `s2` may still point to the same underlying array as `s1`; or it might point to a different one, depending on whether append had to allocate a new array. As a result, in some cases, updates to `s2` will also change `s1`, whereas in other cases, updates to `s2` will leave `s1` unchanged.
+
+This behavior could be easily characterized as "random", although the behavior is in fact quite deterministic. An observer who always knows the values of slice length, capacity, and the number of items to append can trivially determine whether `append()` needs to allocate a new array.
 
 
-## A case study
+## A few demos
+
+The code below demonstrates the discussed `Split()` and `append()` scenarios. It also shows how to do achieve an "always copy" semantics when appending.
 */
 
 //
@@ -96,59 +109,76 @@ import (
 	"fmt"
 )
 
+// Split the byte slice `a` at each comma, then update one of the split slices.
 func splitDemo() {
 	fmt.Println("Split demo")
 	// bytes.Split splits in place.
 	a := []byte("a,b,c")
 	b := bytes.Split(a, []byte(","))
-	fmt.Printf("b: %q\n", b)
+	fmt.Printf("a: %q\n", a)
 
-	// b's byte slices use a's underlying array.
-	fmt.Println("Setting a[0] to '*'")
-	a[0] = byte('*')
-	fmt.Printf("b: %q\n", b)
+	// `b``'s byte slices use `a``'s underlying array. Changing `b[0][0]` also changes `a`.
+	b[0][0] = byte('*')
+	fmt.Printf("a: %q\n", a)
 }
 
+// Append numbers to a slice; first, within capacity, then beyond capacity.
 func appendDemo() {
 	fmt.Println("\nAppend demo")
-	s1 := []int{1, 2}
+	s1 := make([]int, 2, 4)
+	s1[0] = 1
+	s1[1] = 2
 	fmt.Printf("%p: %[1]v\n", s1)
-	s1 = append(s1, 4)
+	s1 = append(s1, 3, 4)
+	// Note the same address as before.
+	fmt.Printf("%p: %[1]v\n", s1)
+	s1 = append(s1, 5)
+	// Note the changed address. Append allocated a new, larger array.
 	fmt.Printf("%p: %[1]v\n", s1)
 }
 
+// How to get "always copy" semantics: simply `copy()` the slice before appending. Ensure the target slice is large enough for the subsequent `append()`, or else `append()` might again allocate a new array.
 func alwaysCopy() {
-	fmt.Println("append and always copy")
+	fmt.Println("\nAppend and always copy")
 	s1 := []int{1, 2, 3, 4}
-	// Create a new slice with sufficient len (for copy) and cap (for append).
+	fmt.Printf("s1: %p: %[1]v\n", s1)
+	// Create a new slice with sufficient len (for copying) and cap (for appending - to avoid allocating and copying twice).
 	s2 := make([]int, 4, 8)
 	// Destination is always the first parameter, analogous to Fprintf, http.HandleFunc, etc.
 	copy(s2, s1)
+	fmt.Printf("s2: %p: %[1]v\n", s2)
 	s2 = append(s2, 5, 6, 7, 8)
-	fmt.Printf("%p: %[1]v\n", s1)
-	fmt.Printf("%p: %[1]v\n", s2)
-}
-
-func neverCopy() {
-	fmt.Println("append but never copy")
-	// Create a new slice with len=4 and cap=8.
-	s1 := make([]int, 4, 8)
-	// Fill the slice with initial data.
-	copy(s1, []int{1, 2, 3, 4})
-	fmt.Printf("%p: %[1]v\n", s1)
-	// Append without copying.
-
-	fmt.Printf("%p: %[1]v\n", s1)
+	// Note the different addresses.
+	fmt.Printf("s2: %p: %[1]v\n", s2)
 }
 
 func main() {
 	splitDemo()
 	appendDemo()
 	alwaysCopy()
-	neverCopy()
 }
 
 /*
+
+Output:
+
+```
+Split demo
+a: "a,b,c"
+a: "*,b,c"
+
+Append demo
+0xc4200740e0: [1 2]
+0xc4200740e0: [1 2 3 4]
+0xc420090100: [1 2 3 4 5]
+
+Append and always copy
+s1: 0xc420074180: [1 2 3 4]
+s2: 0xc420090140: [1 2 3 4]
+s2: 0xc420090140: [1 2 3 4 5 6 7 8]
+```
+
+
 ## How to get and run the code
 
 Step 1: `go get` the code. Note the `-d` flag that prevents auto-installing
@@ -165,7 +195,7 @@ Step 3. Run the binary.
     go run TODO:.go
 
 
-## Conclusions
+## Takeaways
 
 ### Remember that append() may or may not allocate a new slice.
 
