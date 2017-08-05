@@ -248,4 +248,7 @@ Update 2017-08-05:
 
 * Fixed fig. 3 to correctly show that len(t) == 3
 * Added new case: Split then append
+
+- - -
+
 */
