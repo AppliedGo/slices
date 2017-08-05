@@ -96,7 +96,7 @@ In combination with `bytes.Split()`, `append()` can also create unexpected resul
 
 HYPE[split and append](slices04.html)
 
-*Fig. 4: Split, then append to the first returned slice*
+*Fig. 4: After splitting (see fig. 2), append to the first returned slice*
 
 If `bytes.Split()` returned all slices with their capacity set to their length, `append()` would not be able to overwrite subsequent slices, as it would immediately allocate a new array, to be able to extend beyond the slice's current capacity.
 
@@ -156,7 +156,7 @@ func alwaysCopy() {
 	s2 := make([]int, 4, 8)
 	// Destination is always the first parameter, analogous to Fprintf, http.HandleFunc, etc.
 	copy(s2, s1)
-	// Note the different addresses of s1 and s2.
+	// Note the different addresses of s1 and s2 in the output.
 	fmt.Printf("s2: %p: %[1]v\n", s2)
 	s2 = append(s2, 5, 6, 7, 8)
 	// s2 has enough capacity so that append() does not allocate again.
@@ -175,18 +175,21 @@ Output:
 
 ```
 Split demo
-a: "a,b,c"
-a: "*,b,c"
+a before changing b[0][0]: "a,b,c"
+a after changing b[0][0]:  "*,b,c"
+b[1] before appending to b[0]: "b"
+b[1] after appending to b[0]:  "e"
+a after appending to b[0]: "*defc"
 
 Append demo
-0xc4200740e0: [1 2]
-0xc4200740e0: [1 2 3 4]
-0xc420090100: [1 2 3 4 5]
+Initial address and value: 0xc42000a340: [1 2]
+After first append:        0xc42000a340: [1 2 3 4]
+After second append:       0xc420012380: [1 2 3 4 5]
 
 Append and always copy
-s1: 0xc420074180: [1 2 3 4]
-s2: 0xc420090140: [1 2 3 4]
-s2: 0xc420090140: [1 2 3 4 5 6 7 8]
+s1: 0xc42000a3c0: [1 2 3 4]
+s2: 0xc4200123c0: [1 2 3 4]
+s2: 0xc4200123c0: [1 2 3 4 5 6 7 8]
 ```
 
 
