@@ -24,7 +24,7 @@ description = "Go slices are based on a smart concept that does not like being i
 author = "Christoph Berger"
 email = "chris@appliedgo.net"
 date = "2017-08-03"
-draft = "true"
+draft = "false"
 domains = ["Patterns and Paradigms"]
 tags = ["slice", "append", "split", "memory management", "gotcha"]
 categories = ["Background"]
@@ -34,7 +34,7 @@ Go's slices are cleverly designed. They provide the look-and-feel of truly dynam
 
 <!--more-->
 
-*Just recently I noticed a few discussions--again--about seemingly behavior of slice operations. I take this as an opportunity to talk a bit about slice internals and the mechanics around slice operations, especially `append()` and `bytes.Split()`.*
+*Background: Just recently I observed a few discussions--again--about seemingly inconsistent behavior of slice operations. I take this as an opportunity to talk a bit about slice internals and the mechanics around slice operations, especially `append()` and `bytes.Split()`.*
 
 
 ## Go's slices
@@ -54,6 +54,8 @@ This means that typical slice manipulations are cheap. Creating a slice, expandi
 
 HYPE[slice basics](slices01.html)
 
+*Fig.1: Slices are just "windows" to an array (click the buttons to see the operations)*
+
 This also means that two slices created from the same array can overlap, and after assigning a slice to a new slice variable, both variables now share the same memory cells. Changing one item in one of the slices also change the same item in the other slice. If you want to create a true copy of a slice, create a new slice and use the built-in function `copy()`.
 
 All of this is based on simple and consistent mechanisms. The problems arise when not being aware of these mechanisms.
@@ -61,18 +63,22 @@ All of this is based on simple and consistent mechanisms. The problems arise whe
 
 ## Some slice functions work in place
 
-In the spirit of slices as efficient "dynamic windows" on static arrays, functions that receive and return slices may apply their operations to the original slice.
+Since slices are just efficient "dynamic windows" on static arrays, it does make sense that most slice manipulations also happen in place.
 
 As an example, `bytes.Split()` takes a slice and a separator, splits the slice by the separator, and returns a slice of byte slices.
 
-But: All the byte slices returned by `Split()` still point to the same underlying array as the original slice. This may--no, this *will* come unexpected to those who know split functions from other languages that happily sacrifice efficiency for the convenience of allocate-and-copy semantics.
+But: All the byte slices returned by `Split()` still point to the same underlying array as the original slice. This may come unexpected to many who know similar split functions from other languages that rely on allocate-and-copy semantics (at the expense of efficiency at runtime).
 
 HYPE[split](slices02.html)
 
+*Fig. 2: `bytes.Split()` is an in-place operation*
+
 Code that ignores the fact that the result of `Split()` still points to the original data may cause data corruption in a way that neither the compiler nor the runtime can detect as being wrong.
 
+Another unexpected behavior can happen when combining `bytes.Split()` and `append()` - but first, let's have a look at `append()` alone.
 
-## append() adds convenience--and magic
+
+## append() adds convenience--and some "magic"
 
 `append()` adds new elements to the end of a slice, thus expanding the slice. `append()` has two convenience features:
 * First, it can append to a `nil` slice, making it spring into existence in the moment of appending.
@@ -82,19 +88,17 @@ Especially the second one can cause confusion, because after an `append()`, some
 
 HYPE[split](slices03.html)
 
-And there is a second characteristic of `append()`. It receives the slice parameter *by value* (remember that all parameters are passed by value in Go), which means that the slice header is copied over into `append`'s body. Any change to the slice header--length, capacity, or the location in case of a new array--is therefore only stored in the local copy of the slice header. For this reason, `append()` returns the modified slice header to the caller, to allow updating the original slice header with any changes to location, length, or capacity.
-
-But this does not mean that the return value is always used as intended. Developers who are not aware of `append()`'s semantics could be tempted to assign the result of `append()` to an entirely different variable, for example:
-
-```
-s1 := []int{1, 2, 3, 4}
-s2 := append(s1, 5, 6, 7, 8)
-```
-
-Now `s2` may still point to the same underlying array as `s1`; or it might point to a different one, depending on whether append had to allocate a new array. As a result, in some cases, updates to `s2` will also change `s1`, whereas in other cases, updates to `s2` will leave `s1` unchanged.
+*Fig. 3: The two outcomes of `append()`*
 
 This behavior could be easily characterized as "random", although the behavior is in fact quite deterministic. An observer who always knows the values of slice length, capacity, and the number of items to append can trivially determine whether `append()` needs to allocate a new array.
 
+In combination with `bytes.Split()`, `append()` can also create unexpected results. The slices that `bytes.Split()` returns have their `cap()` set to the end of the underlying array. Now when `append()`ing to the first of the returned slices, the slice grows within the same underlying array, overwriting subsequent slices.
+
+HYPE[split and append](slices04.html)
+
+*Fig. 4: Split, then append to the first returned slice*
+
+If `bytes.Split()` returned all slices with their capacity set to their length, `append()` would not be able to overwrite subsequent slices, as it would immediately allocate a new array, to be able to extend beyond the slice's current capacity.
 
 ## A few demos
 
@@ -115,11 +119,17 @@ func splitDemo() {
 	// bytes.Split splits in place.
 	a := []byte("a,b,c")
 	b := bytes.Split(a, []byte(","))
-	fmt.Printf("a: %q\n", a)
+	fmt.Printf("a before changing b[0][0]: %q\n", a)
 
 	// `b``'s byte slices use `a``'s underlying array. Changing `b[0][0]` also changes `a`.
 	b[0][0] = byte('*')
-	fmt.Printf("a: %q\n", a)
+	fmt.Printf("a after changing b[0][0]:  %q\n", a)
+
+	// Appending to slice `b[0]` can write into slices `b[1]` and even `b[2], as `b[0]`'s capacity extends until the end of the underlying array that all slices share.
+	fmt.Printf("b[1] before appending to b[0]: %q\n", b[1])
+	b[0] = append(b[0], 'd', 'e', 'f')
+	fmt.Printf("b[1] after appending to b[0]:  %q\n", b[1])
+	fmt.Printf("a after appending to b[0]: %q\n", a)
 }
 
 // Append numbers to a slice; first, within capacity, then beyond capacity.
@@ -128,13 +138,13 @@ func appendDemo() {
 	s1 := make([]int, 2, 4)
 	s1[0] = 1
 	s1[1] = 2
-	fmt.Printf("%p: %[1]v\n", s1)
+	fmt.Printf("Initial address and value: %p: %[1]v\n", s1)
 	s1 = append(s1, 3, 4)
 	// Note the same address as before.
-	fmt.Printf("%p: %[1]v\n", s1)
+	fmt.Printf("After first append:        %p: %[1]v\n", s1)
 	s1 = append(s1, 5)
 	// Note the changed address. Append allocated a new, larger array.
-	fmt.Printf("%p: %[1]v\n", s1)
+	fmt.Printf("After second append:       %p: %[1]v\n", s1)
 }
 
 // How to get "always copy" semantics: simply `copy()` the slice before appending. Ensure the target slice is large enough for the subsequent `append()`, or else `append()` might again allocate a new array.
@@ -146,9 +156,10 @@ func alwaysCopy() {
 	s2 := make([]int, 4, 8)
 	// Destination is always the first parameter, analogous to Fprintf, http.HandleFunc, etc.
 	copy(s2, s1)
+	// Note the different addresses of s1 and s2.
 	fmt.Printf("s2: %p: %[1]v\n", s2)
 	s2 = append(s2, 5, 6, 7, 8)
-	// Note the different addresses.
+	// s2 has enough capacity so that append() does not allocate again.
 	fmt.Printf("s2: %p: %[1]v\n", s2)
 }
 
@@ -184,15 +195,15 @@ s2: 0xc420090140: [1 2 3 4 5 6 7 8]
 Step 1: `go get` the code. Note the `-d` flag that prevents auto-installing
 the binary into `$GOPATH/bin`.
 
-    go get -d github.com/appliedgo/TODO:
+    go get -d github.com/appliedgo/slices
 
 Step 2: `cd` to the source code directory.
 
-    cd $GOPATH/src/github.com/appliedgo/TODO:
+    cd $GOPATH/src/github.com/appliedgo/slices
 
-Step 3. Run the binary.
+Step 3. Run the code.
 
-    go run TODO:.go
+    go run slices.go
 
 
 ## Takeaways
@@ -219,16 +230,19 @@ Hence if you receive a slice from a function, keep in mind that other code may s
 
 Functions that create or return copies of slices usually mention this in their documentation:
 
-> "...returns a copy of..."
->
-> "...returns a new byte slice..."
+*"...returns a copy of..."*
 
-Whereas the documentation of in-place operations often talks about "slicing" or "subslices", which indicates that no allocation takes place and the returned data may still be accessed by other code.
+*"...returns a new byte slice..."*
 
-
-## Links
+Whereas the documentation of in-place operations often talks about *"slicing"* or *"subslices"*, which indicates that no allocation takes place and the returned data may still be accessed by other code.
 
 
 **Happy coding!**
 
+- - -
+
+Update 2017-08-05:
+
+* Fixed fig. 3 to correctly show that len(t) == 3
+* Added new case: Split then append
 */
