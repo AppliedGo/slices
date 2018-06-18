@@ -93,13 +93,13 @@ HYPE[split](slices03.html)
 
 This behavior could be easily characterized as "random", although the behavior is in fact quite deterministic. An observer who always knows the values of slice length, capacity, and the number of items to append can trivially determine whether `append()` needs to allocate a new array.
 
-In combination with `bytes.Split()`, `append()` can also create unexpected results. The slices that `bytes.Split()` returns have their `cap()` set to the end of the underlying array. Now when `append()`ing to the first of the returned slices, the slice grows within the same underlying array, overwriting subsequent slices.
+Prior to Go 1.10, `append()` can also create unexpected results in combination with `bytes.Split()`. The slices that `bytes.Split()` return in pre-1.10 have their `cap()` set to the end of the underlying array. Now when `append()`ing to the first of the returned slices, the slice grows within the same underlying array, overwriting subsequent slices.
 
 HYPE[split and append](slices04.html)
 
-*Fig. 4: After splitting (see fig. 2), append to the first returned slice*
+*Fig. 4: In Go < 1.10, after splitting (see fig. 2), append to the first returned slice*
 
-If `bytes.Split()` returned all slices with their capacity set to their length, `append()` would not be able to overwrite subsequent slices, as it would immediately allocate a new array, to be able to extend beyond the slice's current capacity.
+In Go 1.10 and later,`bytes.Split()` returns all slices with their capacity set to their own length,rather than that of the underlying array. `append()` thus is not able to overwrite subsequent slices anymore.
 
 ## A few demos
 
@@ -122,11 +122,11 @@ func splitDemo() {
 	b := bytes.Split(a, []byte(","))
 	fmt.Printf("a before changing b[0][0]: %q\n", a)
 
-	// `b``'s byte slices use `a``'s underlying array. Changing `b[0][0]` also changes `a`.
+	// `b`'s byte slices use `a`'s underlying array. Changing `b[0][0]` also changes `a`.
 	b[0][0] = byte('*')
 	fmt.Printf("a after changing b[0][0]:  %q\n", a)
 
-	// Appending to slice `b[0]` can write into slices `b[1]` and even `b[2], as `b[0]`'s capacity extends until the end of the underlying array that all slices share.
+	// This code should work as expected *unless* you use Go 1.9 or earlier. Before Go 1.10, appending to slice `b[0]` can write into slices `b[1]` and even `b[2], as `b[0]`'s capacity extends until the end of the underlying array that all slices share.
 	fmt.Printf("b[1] before appending to b[0]: %q\n", b[1])
 	b[0] = append(b[0], 'd', 'e', 'f')
 	fmt.Printf("b[1] after appending to b[0]:  %q\n", b[1])
