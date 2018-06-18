@@ -81,6 +81,7 @@ Another unexpected behavior can happen when combining `bytes.Split()` and `appen
 ## append() adds convenience--and some "magic"
 
 `append()` adds new elements to the end of a slice, thus expanding the slice. `append()` has two convenience features:
+
 * First, it can append to a `nil` slice, making it spring into existence in the moment of appending.
 *  Second, if the remaining capacity is not sufficient for appending new values, `append()` automatically takes care of allocating a new array and copying the old content over.
 
