@@ -25,9 +25,9 @@ author = "Christoph Berger"
 email = "chris@appliedgo.net"
 date = "2017-08-03"
 draft = "false"
-domains = ["Patterns and Paradigms"]
+categories = ["Patterns and Paradigms"]
 tags = ["slice", "append", "split", "memory management", "gotcha"]
-categories = ["Background"]
+articletypes = ["Background"]
 +++
 
 Go's slices are cleverly designed. They provide the look-and-feel of truly dynamic arrays while being optimized for performance. However, not being aware of the slice mechanisms can bring you into trouble.
